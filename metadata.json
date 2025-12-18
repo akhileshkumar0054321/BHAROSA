@@ -1,0 +1,8 @@
+{
+  "name": "Bharosa - Premium Trust Ledger",
+  "description": "A high-end, American Express Centurion inspired financial trust ecosystem for customers and shopkeepers. Elevating traditional credit management with global card standards and AI-powered trust analysis.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}
