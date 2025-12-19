@@ -29,6 +29,30 @@ export interface Customer {
   totalDue: number;
   lastActive: string;
   trustRating: number;
+  fingerprintHash?: string;
+  faceHash?: string;
+}
+
+export interface Rating {
+  id: string;
+  shopName: string;
+  shopId: string;
+  value: number;
+  comment: string;
+  date: string;
+  location: string;
+}
+
+export interface ShopInfo {
+  id: string;
+  name: string;
+  location: string;
+  avgRating: number;
+  totalRatings: number;
+  trustLevel: 'GOOD' | 'AVERAGE' | 'POOR';
+  isVerified: boolean;
+  comments?: string[];
+  media?: string[];
 }
 
 export interface ActiveTrustLine {
@@ -61,8 +85,24 @@ export interface RegistrationData {
   faceVerified: boolean;
   shopkeeperId?: string;
   alphanumericId?: string;
+  fingerprintHash?: string;
+  faceHash?: string;
 }
 
 export interface ShopkeeperSession extends RegistrationData {
+  isRegistered: boolean;
+}
+
+export interface CustomerRegistrationData {
+  name: string;
+  phone: string;
+  fingerprintVerified: boolean;
+  faceVerified: boolean;
+  customerId: string;
+  fingerprintHash?: string;
+  faceHash?: string;
+}
+
+export interface CustomerSession extends CustomerRegistrationData {
   isRegistered: boolean;
 }

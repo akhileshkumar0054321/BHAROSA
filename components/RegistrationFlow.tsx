@@ -3,9 +3,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldCheck, Phone, User, Fingerprint, Camera, MapPin, 
   ChevronRight, CheckCircle2, Loader2, X, Calendar, 
-  ChevronLeft, AlertCircle, Download, QrCode, Lock
+  ChevronLeft, AlertCircle, Download, QrCode, Lock, Key
 } from 'lucide-react';
 import { RegistrationData } from '../types';
+import { db } from '../database';
 
 interface RegistrationFlowProps {
   onComplete: (data: RegistrationData) => void;
@@ -31,18 +32,34 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
   const [panNumber, setPanNumber] = useState('');
   const [income, setIncome] = useState('');
   const [locationSaved, setLocationSaved] = useState(false);
+  
+  // Simulated Biometric Hashes
+  const [fpHash, setFpHash] = useState<string | undefined>(undefined);
+  const [fHash, setFHash] = useState<string | undefined>(undefined);
+  
+  // Identity Match State
+  const [matchFound, setMatchFound] = useState<RegistrationData | null>(null);
+  const [showIdEntry, setShowIdEntry] = useState(false);
+  const [enteredId, setEnteredId] = useState('');
+
   const [faceStep, setFaceStep] = useState(0);
   const [cameraActive, setCameraActive] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  const [reviewAadhaar, setReviewAadhaar] = useState('');
-  const [reviewPan, setReviewPan] = useState('');
-  const [needsReverification, setNeedsReverification] = useState(false);
-
   const [shopkeeperId, setShopkeeperId] = useState('');
   const [alphaId, setAlphaId] = useState('');
 
-  const simulateOtp = (type: 'aadhaar' | 'phone' | 'reverify') => {
+  // AI Agent Check for Identity
+  useEffect(() => {
+    if (panNumber.length === 10 || verified.finger || verified.face) {
+      const match = db.findShopkeeperByIdentity(panNumber, fpHash, fHash);
+      if (match) {
+        setMatchFound(match);
+      }
+    }
+  }, [panNumber, fpHash, fHash, verified]);
+
+  const simulateOtp = (type: 'aadhaar' | 'phone') => {
     setLoading(prev => ({ ...prev, [type]: true }));
     setTimeout(() => {
       const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -58,13 +75,6 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
           setVerified(prev => ({ ...prev, phone: true }));
           setLoading(prev => ({ ...prev, phone: false }));
         }, 1200);
-      } else if (type === 'reverify') {
-        setAadhaarOtp(code);
-        setTimeout(() => {
-          setVerified(prev => ({ ...prev, reverified: true }));
-          setNeedsReverification(false);
-          setLoading(prev => ({ ...prev, reverify: false }));
-        }, 1500);
       }
     }, 1500);
   };
@@ -72,6 +82,8 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
   const simulateFingerprint = () => {
     setLoading(prev => ({ ...prev, finger: true }));
     setTimeout(() => {
+      const newHash = panNumber === 'ABCDE1234F' ? 'fp-v88' : `fp-${Math.random().toString(36).substring(7)}`;
+      setFpHash(newHash);
       setVerified(prev => ({ ...prev, finger: true }));
       setLoading(prev => ({ ...prev, finger: false }));
     }, 2000);
@@ -93,6 +105,8 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
       setFaceStep(prev => prev + 1);
     } else {
       setFaceStep(4);
+      const newFaceHash = panNumber === 'ABCDE1234F' ? 'face-v88' : `face-${Math.random().toString(36).substring(7)}`;
+      setFHash(newFaceHash);
       setVerified(prev => ({ ...prev, face: true }));
       setCameraActive(false);
       const stream = videoRef.current?.srcObject as MediaStream;
@@ -109,23 +123,6 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
     }, 1200);
   };
 
-  const goToReview = () => {
-    setReviewAadhaar(aadhaar);
-    setReviewPan(panNumber);
-    setPage(3);
-  };
-
-  useEffect(() => {
-    if (page === 3) {
-      if (reviewAadhaar !== aadhaar || reviewPan !== panNumber) {
-        setNeedsReverification(true);
-        setVerified(prev => ({ ...prev, reverified: false }));
-      } else {
-        setNeedsReverification(false);
-      }
-    }
-  }, [reviewAadhaar, reviewPan, page]);
-
   const generateFinalQR = () => {
     const sId = Math.floor(100000000000 + Math.random() * 900000000000).toString();
     const aId = Math.random().toString(36).substring(2, 14).toUpperCase();
@@ -136,28 +133,55 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
 
   const handleFinalize = () => {
     const data: RegistrationData = {
-      ownerName,
-      aadhaar,
-      phone,
-      panName,
-      dob,
-      panNumber,
-      income,
-      fingerprintVerified: true,
-      faceVerified: true,
-      shopkeeperId,
-      alphanumericId: alphaId
+      ownerName, aadhaar, phone, panName, dob, panNumber, income,
+      fingerprintVerified: true, faceVerified: true,
+      shopkeeperId, alphanumericId: alphaId,
+      fingerprintHash: fpHash, faceHash: fHash
     };
+    db.addShopkeeper(data);
     onComplete(data);
   };
 
-  const maskValue = (val: string, type: 'aadhaar' | 'pan') => {
-    if (type === 'aadhaar') return `XXXX XXXX ${val.slice(-4)}`;
-    return 'XXXXXXXXXX';
+  const handleIdAccess = () => {
+    if (matchFound && (enteredId === matchFound.shopkeeperId || enteredId === matchFound.alphanumericId)) {
+      onComplete(matchFound);
+    } else {
+      alert("Invalid Shop ID for recognized identity.");
+    }
   };
 
   const isPage1Valid = !!(ownerName.trim() && aadhaar.length === 12 && phone.length === 10 && verified.aadhaar && verified.phone);
-  const isPage2Valid = panName.trim().length > 0 && dob !== "" && panNumber.trim().length >= 5 && verified.finger === true && verified.face === true && verified.location === true && income !== "";
+  const isPage2Valid = panName.trim().length > 0 && dob !== "" && panNumber.trim().length === 10 && verified.finger && verified.face && verified.location && income !== "";
+
+  if (showIdEntry) {
+    return (
+      <div className="fixed inset-0 z-[60] bg-[#0B0F1A] flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-lg bg-[#141C2F] border border-[#2A3352] rounded-[2.5rem] p-12 text-center space-y-8 shadow-2xl">
+           <div className="w-20 h-20 bg-[#3DDC97]/10 rounded-full flex items-center justify-center mx-auto text-[#3DDC97]"><Key size={32} /></div>
+           <div className="space-y-2">
+             <h2 className="text-3xl font-serif text-white uppercase italic">Merchant <span className="text-[#3DDC97]">Recognized</span></h2>
+             <p className="text-[10px] tracking-[0.3em] uppercase text-[#AAB0C5] font-bold">Enter Merchant ID to sign in</p>
+           </div>
+           <div className="space-y-4">
+              <input 
+                type="text" 
+                placeholder="Shopkeeper ID or Alphanumeric ID" 
+                value={enteredId}
+                onChange={(e) => setEnteredId(e.target.value.toUpperCase())}
+                className="w-full bg-[#1C2438] border border-[#2A3352] rounded-2xl py-5 px-6 text-center font-mono text-lg text-white focus:outline-none focus:border-[#3DDC97]"
+              />
+              <button 
+                onClick={handleIdAccess}
+                className="w-full py-5 bg-[#3DDC97] text-[#0B0F1A] rounded-2xl text-[10px] font-bold tracking-[0.4em] uppercase"
+              >
+                Access Merchant Desk
+              </button>
+              <button onClick={() => setShowIdEntry(false)} className="text-[10px] text-[#6B7280] uppercase tracking-widest font-bold">Cancel</button>
+           </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[60] bg-[#0B0F1A] flex flex-col items-center justify-center p-4 overflow-y-auto custom-scrollbar">
@@ -172,11 +196,28 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
             <ChevronLeft size={16} /> Back
           </button>
         )}
+
         <div className="flex justify-center gap-2 mb-10">
           {[1, 2, 3, 4].map(s => (
             <div key={s} className={`h-1.5 w-10 rounded-full transition-all duration-500 ${page >= s ? 'bg-[#4DA6FF]' : 'bg-[#2A3352]'}`}></div>
           ))}
         </div>
+
+        {matchFound && page < 3 && (
+          <div className="mb-8 p-6 bg-[#3DDC97]/10 border border-[#3DDC97]/30 rounded-[2rem] space-y-4 animate-in fade-in zoom-in-95">
+             <div className="flex items-center gap-3 text-[#3DDC97]">
+                <AlertCircle size={20} />
+                <p className="text-[10px] font-bold uppercase tracking-widest">AI Agent: Record Match Found</p>
+             </div>
+             <p className="text-xs text-[#AAB0C5] leading-relaxed italic">"Our ledger shows an existing business profile under this identity. Would you like to sign in with your ID?"</p>
+             <button 
+              onClick={() => setShowIdEntry(true)}
+              className="w-full py-4 bg-[#3DDC97] text-[#0B0F1A] rounded-2xl text-[10px] font-bold tracking-[0.2em] uppercase"
+             >
+                Sign In With Merchant ID
+             </button>
+          </div>
+        )}
 
         {page === 1 && (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -196,12 +237,11 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
                   <div className="flex items-center gap-3 p-4 bg-[#3DDC97]/10 border border-[#3DDC97]/30 rounded-2xl text-[#3DDC97]">
                     <CheckCircle2 size={18} />
                     <span className="text-[10px] font-bold tracking-widest uppercase">✔ Aadhaar Verified</span>
-                    <span className="ml-auto font-mono text-sm tracking-widest opacity-60">{aadhaarOtp}</span>
                   </div>
                 )}
               </div>
               <div className="space-y-4">
-                <InputGroup label="Phone Number" placeholder="10 Digit Mobile" value={phone} onChange={(val: string) => setPhone(val.replace(/\D/g, '').slice(0, 10))} icon={<Phone size={18}/>} maxLength={10} />
+                <InputGroup label="Phone Number" placeholder="8888888888 (Use for Match Demo)" value={phone} onChange={(val: string) => setPhone(val.replace(/\D/g, '').slice(0, 10))} icon={<Phone size={18}/>} maxLength={10} />
                 {!verified.phone ? (
                   <button disabled={phone.length !== 10 || loading.phone} onClick={() => simulateOtp('phone')} className="w-full py-4 bg-[#3DDC97] text-[#0B0F1A] rounded-2xl text-[10px] font-bold tracking-[0.4em] uppercase hover:opacity-90 transition-all disabled:opacity-30 flex items-center justify-center gap-2">
                     {loading.phone ? <Loader2 className="animate-spin" size={16} /> : 'Get Phone OTP'}
@@ -210,7 +250,6 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
                   <div className="flex items-center gap-3 p-4 bg-[#3DDC97]/10 border border-[#3DDC97]/30 rounded-2xl text-[#3DDC97]">
                     <CheckCircle2 size={18} />
                     <span className="text-[10px] font-bold tracking-widest uppercase">✔ Phone Verified</span>
-                    <span className="ml-auto font-mono text-sm tracking-widest opacity-60">{phoneOtp}</span>
                   </div>
                 )}
               </div>
@@ -230,7 +269,7 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
             <div className="space-y-4 max-h-[55vh] overflow-y-auto pr-2 custom-scrollbar">
               <InputGroup label="Name (As per PAN)" placeholder="Full Name on Card" value={panName} onChange={setPanName} icon={<User size={18}/>} />
               <InputGroup label="Date of Birth" type="date" value={dob} onChange={setDob} icon={<Calendar size={18}/>} min={minDob} max={todayStr} />
-              <InputGroup label="PAN Number" placeholder="ABCDE1234F" value={panNumber} onChange={(val: string) => setPanNumber(val.toUpperCase())} icon={<ShieldCheck size={18}/>} maxLength={10} />
+              <InputGroup label="PAN Number" placeholder="ABCDE1234F (Use for Match Demo)" value={panNumber} onChange={(val: string) => setPanNumber(val.toUpperCase())} icon={<ShieldCheck size={18}/>} maxLength={10} />
               <div className="space-y-2">
                  <p className="text-[9px] text-[#6B7280] tracking-[0.2em] uppercase font-bold ml-1">Biometric Auth</p>
                  {!verified.finger ? (
@@ -273,21 +312,14 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
               <div className="space-y-2">
                 <p className="text-[9px] text-[#6B7280] tracking-[0.2em] uppercase font-bold ml-1">Shop Address</p>
                 {!locationSaved ? (
-                  <div className="space-y-4">
-                    <div className="h-28 bg-[#1C2438] rounded-2xl border border-[#2A3352] flex items-center justify-center relative overflow-hidden group">
-                      <div className="absolute inset-0 amex-pattern opacity-10"></div>
-                      <MapPin size={24} className="text-[#4DA6FF] animate-bounce" />
-                      <div className="absolute bottom-2 text-[7px] text-[#AAB0C5] uppercase tracking-widest font-bold">Detecting Satellite Signal...</div>
-                    </div>
-                    <button onClick={handleSaveLocation} className="w-full py-3 border border-[#4DA6FF]/30 text-[#4DA6FF] rounded-xl text-[9px] font-bold tracking-[0.2em] uppercase hover:bg-[#4DA6FF]/10 transition-all flex items-center justify-center gap-2">{loading.location ? <Loader2 className="animate-spin" size={14} /> : 'Confirm Current Location'}</button>
-                  </div>
+                  <button onClick={handleSaveLocation} className="w-full py-3 border border-[#4DA6FF]/30 text-[#4DA6FF] rounded-xl text-[9px] font-bold tracking-[0.2em] uppercase hover:bg-[#4DA6FF]/10 transition-all flex items-center justify-center gap-2">{loading.location ? <Loader2 className="animate-spin" size={14} /> : 'Confirm Current Location'}</button>
                 ) : (
                   <div className="flex items-center gap-3 p-5 bg-[#3DDC97]/10 border border-[#3DDC97]/30 rounded-2xl text-[#3DDC97]"><CheckCircle2 size={18} /><span className="text-[10px] font-bold tracking-widest uppercase">✔ Location Saved</span></div>
                 )}
               </div>
               <div className="space-y-2">
                 <p className="text-[9px] text-[#6B7280] tracking-[0.2em] uppercase font-bold ml-1">Annual Turnover</p>
-                <select value={income} onChange={(e) => setIncome(e.target.value)} className="w-full bg-[#1C2438] border border-[#2A3352] rounded-2xl p-5 text-sm text-white focus:outline-none focus:border-[#4DA6FF] appearance-none cursor-pointer">
+                <select value={income} onChange={(e) => setIncome(e.target.value)} className="w-full bg-[#1C2438] border border-[#2A3352] rounded-2xl p-5 text-sm text-white focus:outline-none focus:border-[#4DA6FF] cursor-pointer">
                   <option value="" disabled>Select Income Bracket</option>
                   <option value="0-2">0 – 2 Lakh</option>
                   <option value="2-6">2 – 6 Lakh</option>
@@ -296,60 +328,17 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
                 </select>
               </div>
             </div>
-            <button disabled={!isPage2Valid} onClick={goToReview} className={`w-full py-5 rounded-2xl text-[10px] font-bold tracking-[0.4em] uppercase transition-all duration-500 flex items-center justify-center gap-2 group shadow-xl ${isPage2Valid ? 'bg-[#4DA6FF] text-[#0B0F1A] hover:bg-white animate-pulse shadow-[0_0_20px_rgba(77,166,255,0.4)]' : 'bg-[#2A3352] text-[#6B7280] opacity-50 cursor-not-allowed'}`}>
-              NEXT <ChevronRight size={16} className={`${isPage2Valid ? 'group-hover:translate-x-1' : ''} transition-transform`} />
+            <button disabled={!isPage2Valid || !!matchFound} onClick={() => setPage(3)} className={`w-full py-5 rounded-2xl text-[10px] font-bold tracking-[0.4em] uppercase transition-all duration-500 flex items-center justify-center gap-2 group shadow-xl ${isPage2Valid && !matchFound ? 'bg-[#4DA6FF] text-[#0B0F1A] hover:bg-white' : 'bg-[#2A3352] text-[#6B7280] opacity-50 cursor-not-allowed'}`}>
+              {matchFound ? 'Identity Recognized - Sign In Above' : 'NEXT'} <ChevronRight size={16} />
             </button>
           </div>
         )}
 
         {page === 3 && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
-            <div className="text-center space-y-2">
-              <h2 className="text-3xl font-serif text-white uppercase italic">Final <span className="text-[#4DA6FF]">Review</span></h2>
-              <p className="text-[10px] tracking-[0.3em] uppercase text-[#AAB0C5] font-bold">Review Before Submission</p>
-            </div>
-            <div className="space-y-4 max-h-[55vh] overflow-y-auto pr-2 custom-scrollbar">
-              <InputGroup label="Name" value={panName} onChange={setPanName} icon={<User size={16}/>} />
-              <InputGroup label="Date of Birth" type="date" value={dob} onChange={setDob} icon={<Calendar size={16}/>} min={minDob} max={todayStr} />
-              <div className="space-y-2">
-                 <p className="text-[9px] text-[#6B7280] tracking-[0.2em] uppercase font-bold ml-1">Aadhaar (Masked)</p>
-                 <div className="relative group">
-                    <div className="absolute left-5 top-1/2 -translate-y-1/2 text-[#4DA6FF]"><ShieldCheck size={16} /></div>
-                    <input value={reviewAadhaar} onChange={(e) => setReviewAadhaar(e.target.value.replace(/\D/g, '').slice(0, 12))} className="w-full bg-[#1C2438] border border-[#2A3352] rounded-2xl py-4 pl-12 pr-5 text-sm text-white focus:outline-none focus:border-[#4DA6FF] transition-all" />
-                    <div className="absolute right-5 top-1/2 -translate-y-1/2 text-[9px] text-[#6B7280] uppercase tracking-widest font-bold">{maskValue(reviewAadhaar, 'aadhaar')}</div>
-                 </div>
-              </div>
-              <div className="space-y-2">
-                 <p className="text-[9px] text-[#6B7280] tracking-[0.2em] uppercase font-bold ml-1">PAN Number</p>
-                 <div className="relative group">
-                    <div className="absolute left-5 top-1/2 -translate-y-1/2 text-[#4DA6FF]"><ShieldCheck size={16} /></div>
-                    <input value={reviewPan} onChange={(e) => setReviewPan(e.target.value.toUpperCase())} className="w-full bg-[#1C2438] border border-[#2A3352] rounded-2xl py-4 pl-12 pr-5 text-sm text-white focus:outline-none focus:border-[#4DA6FF] transition-all" />
-                    <div className="absolute right-5 top-1/2 -translate-y-1/2 text-[9px] text-[#6B7280] uppercase tracking-widest font-bold">{maskValue(reviewPan, 'pan')}</div>
-                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                 <div className="space-y-2">
-                    <p className="text-[8px] text-[#6B7280] tracking-[0.2em] uppercase font-bold ml-1">Fingerprint</p>
-                    <div className="p-4 bg-[#0B0F1A] border border-[#2A3352] rounded-2xl flex items-center justify-between opacity-80"><span className="text-[10px] text-[#3DDC97] font-bold uppercase tracking-widest">✔ Verified</span><Lock size={12} className="text-[#6B7280]" /></div>
-                 </div>
-                 <div className="space-y-2">
-                    <p className="text-[8px] text-[#6B7280] tracking-[0.2em] uppercase font-bold ml-1">Face ID</p>
-                    <div className="p-4 bg-[#0B0F1A] border border-[#2A3352] rounded-2xl flex items-center justify-between opacity-80"><span className="text-[10px] text-[#3DDC97] font-bold uppercase tracking-widest">✔ Verified</span><Lock size={12} className="text-[#6B7280]" /></div>
-                 </div>
-              </div>
-              <p className="text-[8px] text-center text-[#6B7280] uppercase tracking-widest font-medium italic mt-2">"Biometric details cannot be changed once registered."</p>
-              {needsReverification && (
-                <div className="p-4 bg-[#FF4D4D]/10 border border-[#FF4D4D]/30 rounded-2xl flex items-start gap-4 animate-pulse">
-                   <AlertCircle className="text-[#FF4D4D] mt-0.5" size={18} />
-                   <div className="space-y-1"><p className="text-[10px] font-bold text-[#FF4D4D] uppercase tracking-widest">Mandatory Re-verification</p><p className="text-[9px] text-[#AAB0C5] leading-relaxed">System detected change in ID details. New Aadhaar OTP is required to proceed.</p></div>
-                </div>
-              )}
-            </div>
-            {needsReverification && !verified.reverified ? (
-               <button onClick={() => simulateOtp('reverify')} disabled={loading.reverify} className="w-full py-5 bg-[#3DDC97] text-[#0B0F1A] rounded-2xl text-[10px] font-bold tracking-[0.4em] uppercase hover:opacity-90 transition-all flex items-center justify-center gap-2 shadow-xl">{loading.reverify ? <Loader2 className="animate-spin" size={16} /> : 'Verify New Identity'}</button>
-            ) : (
-              <button disabled={needsReverification && !verified.reverified} onClick={generateFinalQR} className="w-full py-5 bg-[#4DA6FF] text-[#0B0F1A] rounded-2xl text-[10px] font-bold tracking-[0.4em] uppercase hover:bg-white transition-all shadow-xl flex items-center justify-center gap-3 group">Generate QR <QrCode size={18} className="group-hover:rotate-90 transition-transform" /></button>
-            )}
+          <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500 text-center">
+             <h2 className="text-3xl font-serif text-white uppercase italic">Ready to <span className="text-[#4DA6FF]">Launch</span></h2>
+             <p className="text-xs text-[#AAB0C5]">Generate your unique merchant identifier and QR gateway.</p>
+             <button onClick={generateFinalQR} className="w-full py-5 bg-[#4DA6FF] text-[#0B0F1A] rounded-2xl text-[10px] font-bold tracking-[0.4em] uppercase hover:bg-white transition-all shadow-xl flex items-center justify-center gap-3 group">Generate QR <QrCode size={18} /></button>
           </div>
         )}
 
@@ -360,26 +349,11 @@ const RegistrationFlow: React.FC<RegistrationFlowProps> = ({ onComplete, onCance
               <h2 className="text-3xl font-serif text-white uppercase italic">Registration <span className="text-[#3DDC97]">Complete</span></h2>
               <p className="text-[10px] tracking-[0.3em] uppercase text-[#AAB0C5] font-bold opacity-80">Welcome to the Bharosa Network</p>
             </div>
-            <div className="space-y-6">
-               <div className="relative inline-block p-8 bg-white rounded-3xl shadow-[0_0_50px_rgba(77,166,255,0.2)]">
-                  <div className="w-48 h-48 flex flex-col items-center justify-center text-[#0B0F1A] opacity-80 border-4 border-[#0B0F1A] p-2 relative">
-                     <div className="grid grid-cols-4 grid-rows-4 gap-1 w-full h-full opacity-40">
-                        {Array.from({length: 16}).map((_, i) => (<div key={i} className={`bg-[#0B0F1A] ${Math.random() > 0.5 ? 'opacity-100' : 'opacity-10'}`}></div>))}
-                     </div>
-                     <div className="absolute inset-0 flex items-center justify-center"><div className="p-2 bg-white border-2 border-[#0B0F1A] font-serif font-bold italic text-lg leading-none">B</div></div>
-                  </div>
-                  <div className="absolute -top-3 -right-3 p-3 bg-[#4DA6FF] text-[#0B0F1A] rounded-2xl shadow-lg"><QrCode size={20} /></div>
-               </div>
-               <div className="space-y-2">
-                  <p className="text-[10px] text-[#6B7280] tracking-[0.4em] uppercase font-bold">Shopkeeper ID</p>
-                  <p className="text-2xl font-mono text-white tracking-widest">{shopkeeperId.slice(0,4)} {shopkeeperId.slice(4,8)} {shopkeeperId.slice(8,12)}</p>
-                  <p className="text-[8px] text-[#4DA6FF] tracking-[0.2em] uppercase font-bold mt-1">Ref: {alphaId}</p>
-               </div>
+            <div className="space-y-2">
+               <p className="text-[10px] text-[#6B7280] tracking-[0.4em] uppercase font-bold">Shopkeeper ID</p>
+               <p className="text-2xl font-mono text-white tracking-widest">{shopkeeperId.slice(0,4)} {shopkeeperId.slice(4,8)} {shopkeeperId.slice(8,12)}</p>
             </div>
-            <div className="space-y-4">
-               <button onClick={handleFinalize} className="w-full py-5 bg-white text-[#0B0F1A] rounded-2xl text-[10px] font-bold tracking-[0.4em] uppercase hover:scale-[1.02] transition-all shadow-xl flex items-center justify-center gap-3 group"><Download size={18} className="group-hover:translate-y-1 transition-transform" /> Access Merchant Desk</button>
-               <p className="text-[9px] text-[#6B7280] uppercase tracking-[0.4em] font-medium">Auto-saved to device gallery</p>
-            </div>
+            <button onClick={handleFinalize} className="w-full py-5 bg-white text-[#0B0F1A] rounded-2xl text-[10px] font-bold tracking-[0.4em] uppercase hover:scale-[1.02] transition-all shadow-xl">Access Merchant Desk</button>
           </div>
         )}
       </div>
